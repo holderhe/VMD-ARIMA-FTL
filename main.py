@@ -30,7 +30,7 @@ print = timestamped_print
 
 
 class VMD_ARMA_eval:
-	def __init__(self, data, n_test, pqs, clusters, K=3, method='bfgs', norm=True, best=True, resid=True, fed=True, cpus=0.64*3.3):
+	def __init__(self, data, n_test, pqs, clusters, K=3, method='lbfgs', norm=True, best=True, resid=True, fed=True, cpus=0.64*3.3):
 		# 初始化保存所需数据
 		self.cpus = cpus
 		self.fed = fed
@@ -110,28 +110,27 @@ class VMD_ARMA_eval:
 			data = self.train_decomped[basename][k].dropna()
 
 		model = SARIMAX(data, order=order, trend=trend)
-		if self.best:
-			ret_model = {}
-			model_bic = {}
-			for mtd in ['lbfgs', 'bfgs', 'powell', 'nm']:
-				modelhr_fitted = model.fit(maxiter=np.inf, method=mtd, maxfun=np.inf, low_memory=True)
-				params0 = np.zeros_like(modelhr_fitted.params)
-				params0[-1] = 1#np.var(data)
-				model0p_fitted = model.fit(start_params=params0, maxiter=np.inf, method=mtd, maxfun=np.inf, low_memory=True)
-				if model0p_fitted.bic < modelhr_fitted.bic:
-					ret_model[mtd] = model0p_fitted
-					model_bic[mtd] = model0p_fitted.bic
-				else:
-					ret_model[mtd] = modelhr_fitted
-					model_bic[mtd] = modelhr_fitted.bic
+		ret_model = {}
+		model_bic = {}
+		for mtd in ['lbfgs', 'powell', 'nm']:
+			modelhr_fitted = model.fit(maxiter=np.inf, method=mtd, maxfun=np.inf, low_memory=True)
+			if not modelhr_fitted.mlefit.mle_retvals['converged']:
+				continue
+			params0 = np.zeros_like(modelhr_fitted.params)
+			params0[-1] = 1#np.var(data)
+			model0p_fitted = model.fit(start_params=params0, maxiter=np.inf, method=mtd, maxfun=np.inf, low_memory=True)
+			if not model0p_fitted.mlefit.mle_retvals['converged']:
+				continue
+			if model0p_fitted.bic < modelhr_fitted.bic:
+				ret_model[mtd] = model0p_fitted
+				model_bic[mtd] = model0p_fitted.bic
+			else:
+				ret_model[mtd] = modelhr_fitted
+				model_bic[mtd] = modelhr_fitted.bic
+		try:
 			model_fitted = ret_model.get(min(model_bic.items(), key=lambda x: x[1])[0])
-		else:
-			try:
-				model_fitted = model.fit(maxiter=np.inf, method=self.method, maxfun=np.inf, low_memory=True)
-			except:
-				model_fitted = model.fit(maxiter=np.inf, method='nm', maxfun=np.inf, low_memory=True)
-		if not model_fitted.mlefit.mle_retvals['converged']:
-			model_fitted = model.fit(maxiter=np.inf, method='nm', maxfun=np.inf, low_memory=True)
+		except:
+			return None, None
 		if not model_fitted.mlefit.mle_retvals['converged']:
 			print(
 				f'since not converged, base {basename, k} imf arima model fit for order {order, trend} with all method is skipped!\n')
@@ -141,7 +140,7 @@ class VMD_ARMA_eval:
 		print(f' {basename, k} imf arima model fit for order {order, trend} params are：{param}\n')
 		return (order, trend), param#, ret_bounds
 
-	def arima_time(self, data, scaler, name, k, order, trend):
+	def arima_time(self, data, scaler, name, k, order, trend, mtd):
 		print(f' {name, k} imf arima model fit for order {order, trend}：\n')
 		# if self.norm:
 		# 	scaler = RobustScaler()
@@ -150,44 +149,18 @@ class VMD_ARMA_eval:
 		# 	data = self.train_rebuilt[k][name].dropna()
 		times, bics, iters, feval = [], [], [], []
 
-		if self.best:
-			ret_model = {}
-			model_bic = {}
-			fitting_times = {}
-			for mtd in ['lbfgs', 'bfgs', 'powell', 'nm']:
-				try:
-					starttime = time.time()
-					model_ = SARIMAX(data, order=order, trend=trend)
-					model_start_params = model_.start_params
-					model_fitted = model_.fit(start_params=model_start_params, maxiter=np.inf, method=mtd, maxfun=np.inf, low_memory=True)
-					endtime = time.time()
-				except Exception as e:
-					print(e)
-					print(
-						f'since there is Exception, {name, k} imf arima model fit for order {order, trend} with method {mtd} is skipped\n')
-					continue
-				fitting_times[mtd] = endtime - starttime
-				ret_model[mtd] = model_fitted
-				model_bic[mtd] = model_fitted.bic
-			min_bic = min(model_bic.items(), key=lambda x: x[1])[0]
-			model = ret_model.get(min_bic)
-			fitting_time = fitting_times.get(min_bic)
-		else:
-			starttime = time.time()
-			model_ = SARIMAX(data, order=order, trend=trend)
-			model_start_params = model_.start_params
-			model = model_.fit(start_params=model_start_params, maxiter=np.inf, method=self.method, maxfun=np.inf,
-			                          low_memory=True)
-			endtime = time.time()
-			fitting_time = endtime - starttime
+		starttime = time.time()
+		model_ = SARIMAX(data, order=order, trend=trend)
+		model_start_params = model_.start_params
+		model = model_.fit(start_params=model_start_params, maxiter=np.inf, method=mtd, maxfun=np.inf,
+		                          low_memory=True)
+		endtime = time.time()
+		fitting_time = endtime - starttime
+		if not model.mlefit.mle_retvals['converged']:
 			if not model.mlefit.mle_retvals['converged']:
-				starttime = time.time()
-				model_ = SARIMAX(data, order=order, trend=trend)
-				model_start_params = model_.start_params
-				model = model_.fit(start_params=model_start_params, maxiter=np.inf, method='nm', maxfun=np.inf,
-				                   low_memory=True)
-				endtime = time.time()
-				fitting_time = endtime - starttime
+				print(
+					f'{name, k} noparam fit for order {order, trend} with method {mtd} is not converged.\n')
+			return None
 
 		try:
 			iters.append(model.mlefit.mle_retvals['iterations'])
@@ -204,7 +177,7 @@ class VMD_ARMA_eval:
 			model_fc = model.forecast(steps=self.fc_size)
 		return np.mean(times), np.mean(bics), np.mean(iters), np.mean(feval), model_fc
 
-	def arima_0param_time(self, data, scaler, name, k, order, trend, params):
+	def arima_0param_time(self, data, scaler, name, k, order, trend, params, mtd):
 		print(f' {name, k} imf arima model fit with 0params for order {order, trend}：\n')
 		# if self.norm:
 		# 	scaler = RobustScaler()
@@ -214,37 +187,15 @@ class VMD_ARMA_eval:
 		params0 = np.zeros_like(params)
 		params0[-1] = 1#np.var(data)
 		times, bics, iters, feval = [], [], [], []
-		if self.best:
-			ret_model = {}
-			model_bic = {}
-			fitting_times = {}
-			for mtd in ['lbfgs', 'bfgs', 'powell', 'nm']:
-				try:
-					starttime = time.time()
-					model_fitted = SARIMAX(data, order=order, trend=trend).fit(start_params=params0, maxiter=np.inf, method=mtd, maxfun=np.inf, low_memory=True)
-					endtime = time.time()
-				except Exception as e:
-					print(e)
-					print(
-						f'since there is Exception, {name, k} imf arima model fit with 0params fit for order {order, trend} with method {mtd} is skipped\n')
-					continue
-				fitting_times[mtd] = endtime - starttime
-				ret_model[mtd] = model_fitted
-				model_bic[mtd] = model_fitted.bic
-			min_bic = min(model_bic.items(), key=lambda x: x[1])[0]
-			model = ret_model.get(min_bic)
-			fitting_time = fitting_times.get(min_bic)
-		else:
-			starttime = time.time()
-			model = SARIMAX(data, order=order, trend=trend).fit(start_params=params0, maxiter=np.inf, method=self.method, maxfun=np.inf, low_memory=True)
-			endtime = time.time()
-			fitting_time = endtime - starttime
+		starttime = time.time()
+		model = SARIMAX(data, order=order, trend=trend).fit(start_params=params0, maxiter=np.inf, method=mtd, maxfun=np.inf, low_memory=True)
+		endtime = time.time()
+		fitting_time = endtime - starttime
+		if not model.mlefit.mle_retvals['converged']:
 			if not model.mlefit.mle_retvals['converged']:
-				starttime = time.time()
-				model = SARIMAX(data, order=order, trend=trend).fit(start_params=params0, maxiter=np.inf,
-				                                                    method='nm', maxfun=np.inf, low_memory=True)
-				endtime = time.time()
-				fitting_time = endtime - starttime
+				print(
+					f'{name, k} imf 0param fit for order {order, trend} with method {mtd} is not converged.\n')
+			return None
 
 		try:
 			iters.append(model.mlefit.mle_retvals['iterations'])
@@ -260,7 +211,7 @@ class VMD_ARMA_eval:
 			model_fc = model.forecast(steps=self.fc_size)
 		return np.mean(times), np.mean(bics), np.mean(iters), np.mean(feval), model_fc
 
-	def arima_param_time(self, data, scaler, name, k, order, trend, param):
+	def arima_param_time(self, data, scaler, name, k, order, trend, param, mtd):
 		print(f' {name, k} imf arima model fit with params for order {order, trend}：\n')
 		# if self.norm:
 		# 	scaler = RobustScaler()
@@ -269,67 +220,18 @@ class VMD_ARMA_eval:
 		# 	data = self.train_rebuilt[k][name].dropna()
 		times, bics, iters, feval = [], [], [], []
 
-		if self.best:
-			ret_model = {}
-			model_bic = {}
-			fitting_times = {}
-			for mtd in ['lbfgs', 'bfgs', 'powell', 'nm']:
-				try:
-					starttime = time.time()
-					model_fitted = SARIMAX(data, order=order, trend=trend).fit(start_params=param, maxiter=np.inf, method=mtd, maxfun=np.inf, low_memory=True)
-					endtime = time.time()
-					if not -np.inf < model_fitted.bic < np.inf:
-						print("model bic is nan!")
-						starttime = time.time()
-						model_fitted = SARIMAX(data, order=order, trend=trend, enforce_invertibility=0).fit(start_params=param, maxiter=np.inf, method=mtd, maxfun=np.inf, low_memory=True)
-						endtime = time.time()
-				except Exception as e:
-					print(e)
-					print(
-						f'since there is Exception, {name, k} imf arima model fit for order {order, trend} with method {mtd} is skipped\n')
-					continue
-				fitting_times[mtd] = endtime - starttime
-				ret_model[mtd] = model_fitted
-				model_bic[mtd] = model_fitted.bic
-			min_bic = min(model_bic.items(), key=lambda x: x[1])[0]
-			model = ret_model.get(min_bic)
-			fitting_time = fitting_times.get(min_bic)
-		else:
-			try:
-				starttime = time.time()
-				model = SARIMAX(data, order=order, trend=trend).fit(start_params=param, maxiter=np.inf, method=self.method, maxfun=np.inf, low_memory=True)
-				endtime = time.time()
-				fitting_time = endtime - starttime
-			except RuntimeWarning:
-				print(
-					f'since there is Exception in RuntimeWarning, {name, k} imf arima model fit for order {order, trend} with method {self.method} is skipped!\n')
-				return None
-			if not model.mlefit.mle_retvals['converged']:
-				print(
-					f'since not converged, {name, k} imf arima model fit for order {order, trend} with method {self.method} is skipped! Change method!\n')
-				for mtd in ['lbfgs', 'bfgs', 'nm']:
-					print(
-						f'since method {self.method} not converged, {name, k} imf arima model fit for order {order, trend} with method {mtd}!\n')
-					try:
-						starttime = time.time()
-						model = SARIMAX(data, order=order, trend=trend).fit(start_params=param,
-						                                                           maxiter=np.inf, method=mtd,
-						                                                           maxfun=np.inf, low_memory=True)
-						endtime = time.time()
-						fitting_time = endtime - starttime
-					except Exception as e:
-						print(e)
-						print(
-							f'since there is Exception, {name, k} imf arima model fit for order {order, trend} with method {mtd} is skipped\n')
-						continue
-					if not model.mlefit.mle_retvals['converged']:
-						continue
-					else:
-						break
-
+		try:
+			starttime = time.time()
+			model = SARIMAX(data, order=order, trend=trend).fit(start_params=param, maxiter=np.inf, method=mtd, maxfun=np.inf, low_memory=True)
+			endtime = time.time()
+			fitting_time = endtime - starttime
+		except RuntimeWarning:
+			print(
+				f'since there is Exception in RuntimeWarning, {name, k} imf arima model fit for order {order, trend} with method {mtd} is skipped!\n')
+			return None
 		if not model.mlefit.mle_retvals['converged']:
 			print(
-				f'since not converged, {name, k} imf arima model fit for order {order, trend} with all method is skipped!\n')
+				f'{name, k} imf param fit for order {order, trend} with method {mtd} is not converged.\n')
 			return None
 
 		try:
@@ -346,54 +248,7 @@ class VMD_ARMA_eval:
 			model_fc = model.forecast(steps=self.fc_size)
 		return np.mean(times), np.mean(bics), np.mean(iters), np.mean(feval), model_fc
 
-	# def set_bounds(self, model_bounds, model_trans, alpha=0.001):
-	# 	lower = model_bounds.conf_int(alpha)[:, 0]  # - model_bounds.bse*stats.norm.ppf(1 - alpha / 2)  # 3sigma原则
-	# 	upper = model_bounds.conf_int(alpha)[:, 1]  # + model_bounds.bse*stats.norm.ppf(1 - alpha / 2)
-	# 	# if not self.norm:
-	# 	intv = upper - lower
-	# 	lower = model_trans.handle_params(lower - intv / 2, transformed=True, includes_fixed=False)
-	# 	upper = model_trans.handle_params(upper + intv / 2, transformed=True, includes_fixed=False)
-	#
-	# 	lower_trans = model_trans.untransform_params(lower)
-	# 	upper_trans = model_trans.untransform_params(upper)
-	# 	upper_trans[(np.isnan(upper_trans)) & (lower_trans < 0)] = -np.inf
-	# 	upper_trans[np.isnan(upper_trans)] = np.inf
-	# 	lower_trans[np.isnan(lower_trans)] = -np.inf
-	#
-	# 	ret_b = []
-	# 	for i, j in zip(lower_trans, upper_trans):
-	# 		if i > j:
-	# 			ret_b.append((j, i))
-	# 		else:
-	# 			ret_b.append((i, j))
-	# 	return ret_b
-	#
-	# def arima_param_bounds_time(self, name, k, order, trend, param, bounds):
-	# 	print(f' {name, k} imf arima model fit with params and bounds for order {order, trend}：\n')
-	# 	if self.norm:
-	# 		# bounds[-1] = (-np.inf, np.inf)
-	# 		data = RobustScaler().fit_transform(self.train_rebuilt[k][name].dropna().values.reshape(-1, 1))
-	# 	else:
-	# 		data = self.train_rebuilt[k][name].dropna()
-	# 	times, bics, iters, feval = [], [], [], []
-	# 	for i in range(1):  # 30 times mean
-	# 		starttime = time.time()
-	# 		model = SARIMAX(data, order=order, trend=trend).fit(start_params=param, bounds=bounds, maxiter=np.inf, method=self.method, maxfun=np.inf)
-	# 		endtime = time.time()
-	# 		if not -np.inf < model.bic < np.inf:
-	# 			# raise Exception("model bic is nan!")
-	# 			starttime = time.time()
-	# 			model = SARIMAX(data, order=order, trend=trend, enforce_stationarity=0, enforce_invertibility=0).fit(
-	# 				start_params=param, maxiter=np.inf, method=self.method, maxfun=np.inf)
-	# 			endtime = time.time()
-	# 		iters.append(model.mlefit.mle_retvals['iterations'])
-	# 		feval.append(model.mlefit.mle_retvals['fcalls'])
-	# 		bics.append(np.around(model.bic, 4))
-	# 		times.append(endtime - starttime)
-	# 	print(f' {name, k} imf arima model fit with params and bounds for order {order, trend} output bics: {bics}; time cost：{times}\n')
-	# 	return np.mean(times), np.mean(bics), np.mean(iters), np.mean(feval), model.forecast(steps=self.fc_size)
-
-	def ret_time_arima_base(self, index, name, k, order, trend, params, method):
+	def ret_time_arima_base(self, index, name, k, order, trend, params, method, mtd):
 		if self.norm:
 			scaler = RobustScaler()
 			data = scaler.fit_transform(self.train_rebuilt[k][name].dropna().values.reshape(-1, 1))
@@ -401,8 +256,8 @@ class VMD_ARMA_eval:
 			data = self.train_rebuilt[k][name].dropna()
 			scaler = None
 		if method == self.arima_time:
-			return index, method(data, scaler, name, k, order, trend)
-		return index, method(data, scaler, name, k, order, trend, params)
+			return index, method(data, scaler, name, k, order, trend, mtd)
+		return index, method(data, scaler, name, k, order, trend, params, mtd)
 		#
 		# if method == self.arima_time:
 		# 	times, bics, iters, feval, model_fc = method(data, scaler, name, k, order, trend)
@@ -410,7 +265,7 @@ class VMD_ARMA_eval:
 		# 	times, bics, iters, feval, model_fc = method(data, scaler, name, k, order, trend, params)
 		# return index, times, bics, iters, feval, model_fc
 
-	def ret_time_arima_seq(self, name, k, order, trend, params):
+	def ret_time_arima_seq(self, name, k, order, trend, params, mtd):
 		print(f' {name, k} imf arima model fit with params for order {order, trend}：\n')
 		result = {}
 		index = ['HR', 'Default', 'TSP']
@@ -425,14 +280,21 @@ class VMD_ARMA_eval:
 		# else:
 		# 	for i in range(len(index)):
 		# 		result[index[i]] = self.ret_time_arima_base(index[i], name, k, order, trend, params, methods[i])[1]
-		result['TSP'] = self.ret_time_arima_base(index[-1], name, k, order, trend, params, methods[-1])[1]
+		result['TSP'] = self.ret_time_arima_base(index[-1], name, k, order, trend, params, methods[-1], mtd)[1]
 		if result['TSP'] is None:
 			return None, None, None
-		if self.res_hr.get((name, k, order, trend), None) is None:
-			self.res_hr[(name, k, order, trend)] = self.ret_time_arima_base(index[0], name, k, order, trend, params, methods[0])[1]
-		if self.res_default.get((name, k, order, trend), None) is None:
-			self.res_default[(name, k, order, trend)] = self.ret_time_arima_base(index[1], name, k, order, trend, params, methods[1])[1]
-		result['HR'], result['Default'] = self.res_hr[(name, k, order, trend)], self.res_default[(name, k, order, trend)]
+		if self.res_hr.get((name, k, order, trend, mtd), None) is None:
+			self.res_hr[(name, k, order, trend, mtd)] = self.ret_time_arima_base(index[0], name, k, order, trend, params, methods[0], mtd)[1]
+		result['HR'] = self.res_hr[(name, k, order, trend, mtd)]
+		if result['HR'] is None:
+			self.res_hr.pop((name, k, order, trend, mtd))
+			return None, None, None
+		if self.res_default.get((name, k, order, trend, mtd), None) is None:
+			self.res_default[(name, k, order, trend, mtd)] = self.ret_time_arima_base(index[1], name, k, order, trend, params, methods[1], mtd)[1]
+		result['Default'] = self.res_default[(name, k, order, trend, mtd)]
+		if result['Default'] is None:
+			self.res_default.pop((name, k, order, trend, mtd))
+			return None, None, None
 		# result['HR'] = self.ret_time_arima_base(index[0], name, k, order, trend, params, methods[0])[1]
 		# result['Default'] = self.ret_time_arima_base(index[0], name, k, order, trend, params, methods[1])[1]
 		res_without_param, res_with_param0,	res_with_param = result['HR'], result['Default'], result['TSP']
@@ -470,9 +332,19 @@ class VMD_ARMA_eval:
 				if base_params is None:
 					return val[ni] + val[nj], -1
 				# n = val[ni + 1] if ni + 1 < len(val) else val[0]
-				res_without_param, res_with_param0, res_with_param = \
-					self.ret_time_arima_seq(n, k, order, trend, params=base_params)
-				if res_with_param is None:
+				for mtd in ['lbfgs', 'powell', 'nm']:
+					res_without_param, res_with_param0, res_with_param = \
+						self.ret_time_arima_seq(n, k, order, trend, base_params, mtd)
+					if res_without_param is None or res_with_param0 is None or res_with_param is None:
+						print(
+							f'target {targetname, k} from source {basename, k} with method {mtd} is not converged.\n')
+						continue
+					else:
+						break
+
+				if res_without_param is None or res_with_param0 is None or res_with_param is None:
+					print(
+						f'target {targetname, k} from source {basename, k} with all method is not converged. Skipped this pair.\n')
 					return val[ni] + val[nj], -1
 				store_key = basename + " to " + n
 				return val[ni]+val[nj], (n, store_key, (res_without_param, res_with_param0, res_with_param))
@@ -643,7 +515,7 @@ class VMD_ARMA_eval:
 		else:
 			data = self.train_rebuilt[self.K][name].dropna()
 
-		for mtd in ['lbfgs', 'bfgs', 'powell', 'nm']:
+		for mtd in ['lbfgs', 'powell', 'nm']:
 			try:
 				model = SARIMAX(data, order=order, trend=trend).fit(maxiter=np.inf, method=mtd, maxfun=np.inf, low_memory=True)
 			except Exception as e:
@@ -1159,7 +1031,7 @@ if __name__ == '__main__':
 	#
 	# 	}
 
-	method = 'bfgs'
+	method = 'lbfgs'
 	norm = 1
 	resid = 1
 	best = 0
